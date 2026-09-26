@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Decrypt text produced by adfgvx_encrypt.py."""
 
+import hashlib
 import sys
 import unicodedata
+from pathlib import Path
 
 
 COORDINATES = "ADFGVX"
 CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-# Enter the same keyword used in the encryption program.
-KEYWORD = "MEINSCHLUESSEL"
+# Both programs load the same secret file from their own folder.
+KEY_FILE = Path(__file__).with_name("adfgvx_secret.key")
+SECRET_SIZE = 64
+LEGACY_SECRET_SIZE = 32
 
 # Colors are only used when the program is running in a real terminal.
 COLOR_ENABLED = sys.stdout.isatty()
@@ -44,6 +48,28 @@ def normalize_key(text: str) -> str:
     )
     text = unicodedata.normalize("NFKD", text)
     return "".join(character for character in text if character in CHARACTERS)
+
+
+def load_key() -> str:
+    """Derive a repeatable ADFGVX key from the shared secret file."""
+    try:
+        secret = KEY_FILE.read_bytes()
+    except FileNotFoundError as error:
+        raise ValueError(
+            f"The key file '{KEY_FILE.name}' is missing. Keep it next to this program."
+        ) from error
+    except OSError as error:
+        raise ValueError(f"The key file could not be read: {error}") from error
+
+    if len(secret) == LEGACY_SECRET_SIZE:
+        # Compatibility with ciphertext created by the previous 256-bit version.
+        return hashlib.sha256(secret).hexdigest().upper()
+    if len(secret) < SECRET_SIZE:
+        raise ValueError(
+            f"The key file is invalid. Expected {LEGACY_SECRET_SIZE} legacy bytes "
+            f"or at least {SECRET_SIZE} current bytes."
+        )
+    return hashlib.sha512(secret).hexdigest().upper()
 
 
 def normalize_ciphertext(text: str) -> str:
@@ -112,7 +138,8 @@ def main() -> None:
     ciphertext = input(f"{BOLD}Encrypted text{RESET}\n› ")
 
     try:
-        _, plaintext = decrypt(ciphertext, KEYWORD)
+        key = load_key()
+        _, plaintext = decrypt(ciphertext, key)
     except ValueError as error:
         print(f"\n{RED}✗ Error: {error}{RESET}")
         return
